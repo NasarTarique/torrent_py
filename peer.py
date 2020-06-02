@@ -6,7 +6,7 @@ import requests
 import urllib.parse
 import asyncio
 import aiohttp
-
+import sys
 
 class TorrInfo:
     def __init__(self):
@@ -50,6 +50,7 @@ class Tracker:
         self.downloaded: int  =0
         self.url = self.get_url()
         self.params = self.get_params()
+        self.tracker_response = {}
 
     
     def get_params(self):
@@ -79,30 +80,32 @@ class Tracker:
         self.loop.run_until_complete(self.get_peers())
         torrent = TorrInfo()
         torrent.get_torr_info('xubuntu-20.04-desktop-amd64.iso.torrent')
-        response = requests.get(url=torrent.tracker_url,params=self.get_params())
-        print("connect")
-        print(response.content)
+       #  response = requests.get(url=torrent.tracker_url,params=self.get_params())
+       #  print("connect")
+       #  print(response)
 
 
     async def get_peers(self):
         async with aiohttp.ClientSession() as  Session:
             response = await self.fetch(Session)
-            print("get_peers")
-            print(response.content)
+            self.tracker_response = bencode.decode(response)
             
     
 
     async def fetch(self,session):
         async with session.get(self.url) as response:
-            print("fetch")
-            print(response)
-            return response
+            return await response.content.read()
+
+
+
 
 
 def main():
     t = Tracker()
     t.connect()
-
+    chunks = [t.tracker_response[b'peers'][x] for x in t.tracker_response[b'peers']]
+    peer_list = [chunks[x:x+6] for x in range(0,len(chunks),6)]
+    print(peer_list[0]) 
 
 if  __name__ == '__main__':
     main()
