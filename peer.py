@@ -7,7 +7,7 @@ import requests
 import urllib.parse
 import asyncio
 import aiohttp
-
+import struct
 #Parse and Store data from torrent file
 class TorrInfo:
     def __init__(self):
@@ -103,7 +103,8 @@ class Tracker:
 
 
 #Manage Peers
-class Peer:
+# Handshake ,keep alive , choke ,unchoke, interested , not interestes, have ,bitfield,request, piece,cancel, port
+class Peer_Messaging:
 
     def __init__(self,host, peer_port,torr_info):
         self.torr_info = torr_info
@@ -120,26 +121,70 @@ class Peer:
         return handshake_msg
 
     def allowhandshake(self):
-        print('Handshake')
-        self.loop.run_until_complete(self.Handshake())
+        self.loop.run_until_complete(self.ConnectPeer())
 
-    async def Handshake(self):
+    async def ConnectPeer(self):
         try:
             reader, writer = await asyncio.open_connection(self.host, self.peer_port)
             writer.write(self.Handshake_msg)
 
             peer_handshake = await reader.read(1000)
 
+            secondmsdg = await reader.read(1000)
             print(peer_handshake)
+            info_hash, peer_id = await self.DecodeHandshakeMsg(peer_handshake)
+            if secondmsdg:
+                print("this is the second msg")
+                print(secondmsdg)
+                await self.decodeMsg(secondmsdg)
+
+            if(info_hash != self.torr_info.info_hash):
+                writer.close()
+                reader.close()
+                print("closing connection")
+                await writer.wait_closed() 
+                await reader.wait_closed()
+            else:
+                print("peer reply")
+                reply = await self.Interested(reader, writer)
+                print(reply)
+
         except Exception as e:
             print(e)
 
+    async def DecodeHandshakeMsg(self, msg):
+        print(len(msg))
+        pstlen, pstr, reserved, info_hash, peer_id = struct.unpack(">1B19s8s20s20s", msg) 
+        print(f"{pstlen} ,{pstr}, {reserved} ,{info_hash}, {peer_id.decode()}")
+        return info_hash, peer_id.decode()
 
+    async def Interested(self, reader, writer):
+        interested_msg = b''.join([((chr(0)*3)+chr(1)).encode(), (chr(2)).encode()])
+        writer.write(interested_msg)
+        return await reader.read(1000)
 
+    async def Unchoke(self, reader, writer):
+        unchoke_msg = b''.join([((chr(0)*3)+chr(1)).encode(), (chr(1)).encode()])
+        writer.write(unchoke_msg)
+        return await reader.read(1000)
 
+    async def KeepAlive(self, writer):
+        keep_alive_msg = b''.join([(chr(0)*4).encode()])
+        writer.write(keep_alive_msg)
 
+    async def Choke(self, reader, writer):
+        choke_msg = b''.join([((chr(0)*3)+chr(1)).encode(), (chr(0)).encode()])
+        writer.write(choke_msg)
 
-
+    async def NotInterested(self, reader, writer):
+        not_interested_msg = b''.join([((chr(0)*3)+chr(1)).encode(), (chr(3)).encode()])
+        writer.write(not_interested_msg)
+    
+    async def decodeMsg(self,msg):
+        upack = struct.unpack(">4B", msg[0:4])
+        load_length = upack[2]*256 + upack[3]
+        load = struct.unpack(f">1B{load_length-1}s",msg[4:4+load_length])
+        print(load_length, load[0], load[1:load_length-2])
 
 
 def main():
@@ -149,10 +194,8 @@ def main():
     torr_info.get_torr_info('xubuntu-20.04-desktop-amd64.iso.torrent')
 
     peer_list = t.peer_list
-    print("main")
-    print(peer_list)
     for x in range(0, len(peer_list), 1):
-        P = Peer(peer_list[x][0], peer_list[x][1], torr_info)
+        P = Peer_Messaging(peer_list[x][0], peer_list[x][1], torr_info)
         P.allowhandshake()
 
 
