@@ -8,7 +8,9 @@ import urllib.parse
 import asyncio
 import aiohttp
 import struct
+
 #Parse and Store data from torrent file
+
 class TorrInfo:
     def __init__(self):
         self.file = {}
@@ -26,22 +28,16 @@ class TorrInfo:
             torrent = bencode.decode(meta_info)
 
         self.file = torrent
-
         self.info_hash = hashlib.sha1(bencode.bencode(torrent[b"info"])).digest()
-
         self.peer_id = '-PC0001-' + ''.join([str(random.randint(0, 9)) for _ in range(12)])
-
         self.parsed_torrent = parse_torrent_file(file_path)
-
         self.torrent_size = self.parsed_torrent['info']['length']
-
         self.tracker_url = self.parsed_torrent['announce']
-
         self.total_pieces = self.parsed_torrent['info']['pieces']
-
         self.piece_size = self.parsed_torrent['info']['piece length']
 
 # Connect to Tracker & parse tracker response
+
 class Tracker:
 
     def __init__(self):
@@ -112,13 +108,13 @@ class Peer_Messaging:
         self.peer_port = peer_port
         self.peer_choking = True
         self.am_interested =  False
+        self.peer_pieces = []
         self.loop = asyncio.get_event_loop()
-        self.Handshake_msg = self.get_handshake_msg()
 
-
-    def get_handshake_msg(self):
+    async def Handshake(self, writer,reader):
         handshake_msg = b''.join([(chr(19).encode()), b'BitTorrent protocol', (chr(0) * 8).encode(), self.torr_info.info_hash, self.torr_info.peer_id.encode() ])
-        return handshake_msg
+        writer.write(handshake_msg)
+        return await reader.read(1000)
 
     def allowhandshake(self):
         self.loop.run_until_complete(self.ConnectPeer())
@@ -126,17 +122,17 @@ class Peer_Messaging:
     async def ConnectPeer(self):
         try:
             reader, writer = await asyncio.open_connection(self.host, self.peer_port)
-            writer.write(self.Handshake_msg)
 
-            peer_handshake = await reader.read(1000)
-
-            secondmsdg = await reader.read(1000)
+            peer_handshake = await self.Handshake(writer, reader)
+            secondmsg = await reader.read(1000)
             print(peer_handshake)
             info_hash, peer_id = await self.DecodeHandshakeMsg(peer_handshake)
-            if secondmsdg:
+            if secondmsg:
                 print("this is the second msg")
-                print(secondmsdg)
-                await self.decodeMsg(secondmsdg)
+                print(secondmsg)
+                length, id, payload = await self.decodeMsg(secondmsg)
+                if id==5:
+                    self.DecodeBitfieldMsg(payload)
 
             if(info_hash != self.torr_info.info_hash):
                 writer.close()
@@ -179,12 +175,28 @@ class Peer_Messaging:
     async def NotInterested(self, reader, writer):
         not_interested_msg = b''.join([((chr(0)*3)+chr(1)).encode(), (chr(3)).encode()])
         writer.write(not_interested_msg)
-    
+   
+    #async def Request(self, reader, writer)
+        
     async def decodeMsg(self,msg):
         upack = struct.unpack(">4B", msg[0:4])
         load_length = upack[2]*256 + upack[3]
         load = struct.unpack(f">1B{load_length-1}s",msg[4:4+load_length])
-        print(load_length, load[0], load[1:load_length-2])
+        return load_length, load[0], load[1:load_length-2]
+    
+    def  DecodeBitfieldMsg(self, payload):
+        self.peer_pieces = [bin(byte)[2:] for byte in payload[0]]
+        print(int(self.peer_pieces[0]))
+
+        
+
+'''class  ManagePeers:
+
+    def __init__(self,TorrInfo, Tracker):
+        self.torr_info = TorrInfo
+        self.pieces_have = [0]*len(TorrInfo.total_pieces)
+        self.Tracker = Tracker
+'''
 
 
 def main():
