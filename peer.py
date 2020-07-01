@@ -11,6 +11,8 @@ import struct
 
 #Parse and Store data from torrent file
 
+
+
 class TorrInfo:
     def __init__(self):
         self.file = {}
@@ -107,9 +109,13 @@ class Peer_Messaging:
         self.host = host
         self.peer_port = peer_port
         self.peer_choking = True
-        self.am_interested =  False
+        self.am_interested = False
         self.peer_pieces = []
         self.loop = asyncio.get_event_loop()
+        self.Block = b'' 
+        self.downloaded_piece = b''
+        self.blocklist = []
+        self.BlockLength = 0
 
     async def Handshake(self, writer,reader):
         handshake_msg = b''.join([(chr(19).encode()), b'BitTorrent protocol', (chr(0) * 8).encode(), self.torr_info.info_hash, self.torr_info.peer_id.encode() ])
@@ -133,20 +139,63 @@ class Peer_Messaging:
                 length, id, payload = await self.decodeMsg(secondmsg)
                 if id==5:
                     self.DecodeBitfieldMsg(payload)
-
-            if(info_hash != self.torr_info.info_hash):
-                writer.close()
-                reader.close()
-                print("closing connection")
-                await writer.wait_closed() 
-                await reader.wait_closed()
             else:
-                print("peer reply")
                 reply = await self.Interested(reader, writer)
-                print(reply)
+                await self.MessageHandler(reader, writer, reply)
+
+            if(info_hash != self.torr_info.info_hash and peer_id!=self.host):
+                await self.CloseConnection(reader, writer)    
+            else:
+                check = await reader.read(10000)
+                print(check)
+                await self.Request(reader, writer)
+                request_reply = await reader.read(65536)
+                print(request_reply)
+                await self.MessageHandler(reader, writer, request_reply)
 
         except Exception as e:
             print(e)
+
+    async def MessageHandler(self, reader, writer, msg):
+        print("jaja")
+        if len(msg) == 4:
+            print("yo")
+            length = struct.unpack(">i", msg)
+            if length == 0:
+                pass
+            else:
+                await self.CloseConnection(reader, writer)
+        else:
+            if len(msg) == 5:
+                length, id = await self.decodeMsg(msg)
+            else:
+                length, id, payload = await self.decodeMsg(msg)
+            
+
+            if id == 0:
+                await self.CloseConnection(reader, writer)
+            elif id == 1:
+                await self.Interested(reader, writer)
+            elif id == 2:
+                pass
+            elif id == 3:
+                pass
+            elif id == 4:
+                pass
+            elif id == 5:
+                self.DecodeBitfieldMsg(payload[0])
+            elif id == 6:
+                pass
+            elif id == 7:
+                await self.BlockMsg(reader, writer, msg)
+            else:
+                await self.CloseConnection(reader, writer)
+
+    async def CloseConnection(self, reader, writer):
+        writer.close()
+        reader.close()
+        await writer.wait_closed()
+        await reader.wait_closed()
 
     async def DecodeHandshakeMsg(self, msg):
         print(len(msg))
@@ -176,19 +225,47 @@ class Peer_Messaging:
         not_interested_msg = b''.join([((chr(0)*3)+chr(1)).encode(), (chr(3)).encode()])
         writer.write(not_interested_msg)
    
-    #async def Request(self, reader, writer)
-        
-    async def decodeMsg(self,msg):
-        upack = struct.unpack(">4B", msg[0:4])
-        load_length = upack[2]*256 + upack[3]
-        load = struct.unpack(f">1B{load_length-1}s",msg[4:4+load_length])
-        return load_length, load[0], load[1:load_length-2]
-    
-    def  DecodeBitfieldMsg(self, payload):
-        self.peer_pieces = [bin(byte)[2:] for byte in payload[0]]
-        print(int(self.peer_pieces[0]))
+    async def Request(self, reader, writer):
+        index = 0
+        for x in range(0, len(self.torr_info.total_pieces)):
+            if self.peer_pieces[x] == '1' and PIECES_HAVE[x] == '0':
+                index = x
+                break
+        request_msg = struct.pack(">iBiii", 13, 6, 0, 0, 16384)
+        writer.write(request_msg)
 
+    async def BlockMsg(self, reader, writer, msg):
+        length, id, payload = await self.decodeMsg(msg)
+        self.DecodePieceMsg(payload[0])
+        while True:
+            blockparts = await reader.read(65536)
+            self.BlockLength += len(blockparts)
+            if self.BlockLength <= 16384:
+                self.Block += blockparts
+                print(blockparts)
+                if len(blockparts) == 0:
+                    print(len(self.Block))
+                    break
         
+    async def decodeMsg(self, msg):
+        load_length, id = struct.unpack(">iB", msg[0:5])
+        if len(msg) >= 6:
+            load = struct.unpack(f">{len(msg)-5}s", msg[5:len(msg)])
+            return load_length, id, load
+        else:
+            return load_length, id
+    
+    def DecodeBitfieldMsg(self, payload):
+        self.peer_pieces = ''.join([bin(byte)[2:] for byte in payload[0]])
+        print(self.peer_pieces[0])
+    
+    def DecodePieceMsg(self, payload):
+        index, block = struct.unpack(">ii", payload[0:8])
+        block_data = payload[8:len(payload)]
+        self.BlockLength += len(block_data)
+        self.Block += block_data
+        print(block_data)
+
 
 '''class  ManagePeers:
 
@@ -197,6 +274,12 @@ class Peer_Messaging:
         self.pieces_have = [0]*len(TorrInfo.total_pieces)
         self.Tracker = Tracker
 '''
+
+
+TORR_DATA = TorrInfo()
+TORR_DATA.get_torr_info('xubuntu-20.04-desktop-amd64.iso.torrent')
+PIECES_HAVE = '0'*len(TORR_DATA.total_pieces)
+print(f"PIECES_HAVE:::::::::::::::::::::::::::::::::::::::{PIECES_HAVE}")
 
 
 def main():
@@ -213,5 +296,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
