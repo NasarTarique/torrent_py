@@ -3,40 +3,22 @@ import sys
 import random
 import hashlib
 from torrent_parser import parse_torrent_file
-import requests
+# import requests
 import urllib.parse
 import asyncio
 import aiohttp
 import struct
+from math import ceil
+import pdb
+from torrinfo import TorrInfo
 
-#Parse and Store data from torrent file
+# Parse and Store data from torrent file
 
+TORRENT_PATH = 'xubuntu-20.04.1-desktop-amd64.iso.torrent'
+TORR_DATA = TorrInfo(TORRENT_PATH)
+PIECES_HAVE = '0'*len(TORR_DATA.piece_hashes)
+BlocksPerPiece = ceil(TORR_DATA.piece_size/16384)
 
-
-class TorrInfo:
-    def __init__(self):
-        self.file = {}
-        self.info_hash: str = ''
-        self.peer_id: str = ''
-        self.parsed_torrent = {}
-        self.torrent_size: int = 0
-        self.tracker_url: str = ''
-        self.total_pieces: int = 0
-        self.piece_size: int = 0
-
-    def get_torr_info(self, file_path):
-        with open(file_path, 'rb') as f:
-            meta_info = f.read()
-            torrent = bencode.decode(meta_info)
-
-        self.file = torrent
-        self.info_hash = hashlib.sha1(bencode.bencode(torrent[b"info"])).digest()
-        self.peer_id = '-PC0001-' + ''.join([str(random.randint(0, 9)) for _ in range(12)])
-        self.parsed_torrent = parse_torrent_file(file_path)
-        self.torrent_size = self.parsed_torrent['info']['length']
-        self.tracker_url = self.parsed_torrent['announce']
-        self.total_pieces = self.parsed_torrent['info']['pieces']
-        self.piece_size = self.parsed_torrent['info']['piece length']
 
 # Connect to Tracker & parse tracker response
 
@@ -52,16 +34,14 @@ class Tracker:
         self.peer_list = []
 
     def get_params(self):
-        torrent = TorrInfo()
-        torrent.get_torr_info('xubuntu-20.04-desktop-amd64.iso.torrent')
         params = {
-            'info_hash': torrent.info_hash,
-            'peer_id': torrent.peer_id,
+            'info_hash': TORR_DATA.info_hash,
+            'peer_id': TORR_DATA.peer_id,
             'port': 6889,
             'uploaded': self.uploaded,
             'downloaded': self.downloaded,
             'compact': 0,
-            'left': torrent.torrent_size - self.downloaded,
+            'left': TORR_DATA.torrent_size - self.downloaded,
             'event': 'started',
 
         }
@@ -69,16 +49,14 @@ class Tracker:
         return params
 
     def get_url(self):
-        torrent = TorrInfo()
-        torrent.get_torr_info('xubuntu-20.04-desktop-amd64.iso.torrent')
-        url = torrent.tracker_url + '?'+urllib.parse.urlencode(self.get_params())
+        url = TORR_DATA.tracker_url + '?'+urllib.parse.urlencode(self.get_params())
         return url
 
     def connect(self):
         self.loop.run_until_complete(self.get_peers())
 
     async def decode_tracker_response(self):
-        chunks = list(self.tracker_response[b'peers'])
+        chunks = list(self.tracker_response['peers'])
         peers_enc = [chunks[x:x+6] for x in range(0,len(chunks),6)]
 
         for peer in peers_enc:
@@ -92,6 +70,7 @@ class Tracker:
         async with aiohttp.ClientSession() as  Session:
             response = await self.fetch(Session)
             self.tracker_response = bencode.decode(response)
+            # print(self.tracker_response)
             await self.decode_tracker_response()
 
 
@@ -112,10 +91,15 @@ class Peer_Messaging:
         self.am_interested = False
         self.peer_pieces = []
         self.loop = asyncio.get_event_loop()
-        self.Block = b'' 
+
+        self.Block = b''
         self.downloaded_piece = b''
         self.blocklist = []
+        # stores the length of the block downloaded from peer
         self.BlockLength = 0
+        # Holds the index of the piece and block that needs to pe requested from the peer
+        self.RequestPieceIndex = 0 
+        self.RequestBlockIndex = 0
 
     async def Handshake(self, writer,reader):
         handshake_msg = b''.join([(chr(19).encode()), b'BitTorrent protocol', (chr(0) * 8).encode(), self.torr_info.info_hash, self.torr_info.peer_id.encode() ])
@@ -131,11 +115,10 @@ class Peer_Messaging:
 
             peer_handshake = await self.Handshake(writer, reader)
             secondmsg = await reader.read(1000)
-            print(peer_handshake)
             info_hash, peer_id = await self.DecodeHandshakeMsg(peer_handshake)
             if secondmsg:
                 print("this is the second msg")
-                print(secondmsg)
+                print("secondmsg")
                 length, id, payload = await self.decodeMsg(secondmsg)
                 if id==5:
                     self.DecodeBitfieldMsg(payload)
@@ -144,27 +127,44 @@ class Peer_Messaging:
                 await self.MessageHandler(reader, writer, reply)
 
             if(info_hash != self.torr_info.info_hash and peer_id!=self.host):
-                await self.CloseConnection(reader, writer)    
+                await self.CloseConnection(writer)    
             else:
                 check = await reader.read(10000)
-                print(check)
-                await self.Request(reader, writer)
-                request_reply = await reader.read(65536)
-                print(request_reply)
-                await self.MessageHandler(reader, writer, request_reply)
+                self.GetPieceIndex()
+                for x in range(0, BlocksPerPiece, 1):
+                    print(f"{x}")
+                    await self.Request(reader, writer)
+                    request_reply = await reader.read(65536) 
+                    # print("request_reply")
+                    await self.MessageHandler(reader, writer, request_reply)
+                    print(f"Blocklength =============={self.BlockLength}")
+                    self.downloaded_piece += self.Block
+                    print(f"piece length {len(self.downloaded_piece)}")
+                    print(TORR_DATA.piece_size)
+                    if len(self.downloaded_piece) == TORR_DATA.piece_size:
+                        # piec = self.downloaded_piece.decode()
+                        with open("file.iso", "wb",2621440) as filewrite:
+                            filewrite.write(self.downloaded_piece)
+                        downloaded_piece_hashes = hashlib.sha1(self.downloaded_piece).hexdigest()
+                        print(f"info hash {downloaded_piece_hashes}")
+                        print(f"file info hash {TORR_DATA.piece_hashes[0]}")
+                        if downloaded_piece_hashes == TORR_DATA.piece_hashes[0]:
+                            print("matched")
+ 
+                    self.Block = b'' 
+                    self.BlockLength = 0
+                    self.RequestBlockIndex += 16384
+
 
         except Exception as e:
             print(e)
 
     async def MessageHandler(self, reader, writer, msg):
-        print("jaja")
         if len(msg) == 4:
-            print("yo")
-            length = struct.unpack(">i", msg)
-            if length == 0:
+            length = struct.unpack(">i", msg) if length == 0:
                 pass
             else:
-                await self.CloseConnection(reader, writer)
+                await self.CloseConnection(writer)
         else:
             if len(msg) == 5:
                 length, id = await self.decodeMsg(msg)
@@ -173,7 +173,7 @@ class Peer_Messaging:
             
 
             if id == 0:
-                await self.CloseConnection(reader, writer)
+                await self.CloseConnection(writer)
             elif id == 1:
                 await self.Interested(reader, writer)
             elif id == 2:
@@ -189,18 +189,14 @@ class Peer_Messaging:
             elif id == 7:
                 await self.BlockMsg(reader, writer, msg)
             else:
-                await self.CloseConnection(reader, writer)
+                await self.CloseConnection(writer)
 
-    async def CloseConnection(self, reader, writer):
+    async def CloseConnection(self, writer):
         writer.close()
-        reader.close()
         await writer.wait_closed()
-        await reader.wait_closed()
 
     async def DecodeHandshakeMsg(self, msg):
-        print(len(msg))
         pstlen, pstr, reserved, info_hash, peer_id = struct.unpack(">1B19s8s20s20s", msg) 
-        print(f"{pstlen} ,{pstr}, {reserved} ,{info_hash}, {peer_id.decode()}")
         return info_hash, peer_id.decode()
 
     async def Interested(self, reader, writer):
@@ -224,14 +220,16 @@ class Peer_Messaging:
     async def NotInterested(self, reader, writer):
         not_interested_msg = b''.join([((chr(0)*3)+chr(1)).encode(), (chr(3)).encode()])
         writer.write(not_interested_msg)
-   
-    async def Request(self, reader, writer):
-        index = 0
-        for x in range(0, len(self.torr_info.total_pieces)):
-            if self.peer_pieces[x] == '1' and PIECES_HAVE[x] == '0':
-                index = x
+    
+    # get the index of the piece and block you need to request from peer
+    def GetPieceIndex(self):
+        for x in range(0, len(self.torr_info.piece_hashes)):
+            if self.peer_pieces == '1' and PIECES_HAVE == '0':
+                self.RequestPieceIndex = x
                 break
-        request_msg = struct.pack(">iBiii", 13, 6, 0, 0, 16384)
+
+    async def Request(self, reader, writer):
+        request_msg = struct.pack(">iBiii", 13, 6, self.RequestPieceIndex, self.RequestBlockIndex, 16384)
         writer.write(request_msg)
 
     async def BlockMsg(self, reader, writer, msg):
@@ -240,15 +238,23 @@ class Peer_Messaging:
         while True:
             blockparts = await reader.read(65536)
             self.BlockLength += len(blockparts)
-            if self.BlockLength <= 16384:
+            if self.RequestBlockIndex == 31:
+                break
+            if self.BlockLength < 16384:
+                self.Block += blockparts 
+                print("Blocklength <")
+                # print(blockparts)
+            elif self.BlockLength == 16384:
+                print("BlockLength =")
                 self.Block += blockparts
-                print(blockparts)
-                if len(blockparts) == 0:
-                    print(len(self.Block))
-                    break
+                # print(blockparts)
+                break
+            else:
+                break
         
     async def decodeMsg(self, msg):
         load_length, id = struct.unpack(">iB", msg[0:5])
+        print(load_length)
         if len(msg) >= 6:
             load = struct.unpack(f">{len(msg)-5}s", msg[5:len(msg)])
             return load_length, id, load
@@ -261,36 +267,29 @@ class Peer_Messaging:
     
     def DecodePieceMsg(self, payload):
         index, block = struct.unpack(">ii", payload[0:8])
+        print(f"BLock offset =  {block} index = {index}")
         block_data = payload[8:len(payload)]
         self.BlockLength += len(block_data)
         self.Block += block_data
-        print(block_data)
+        print("initial Block data")
 
 
 '''class  ManagePeers:
 
     def __init__(self,TorrInfo, Tracker):
         self.torr_info = TorrInfo
-        self.pieces_have = [0]*len(TorrInfo.total_pieces)
+        self.pieces_have = [0]*len(TorrInfo.piece_hashes)
         self.Tracker = Tracker
 '''
-
-
-TORR_DATA = TorrInfo()
-TORR_DATA.get_torr_info('xubuntu-20.04-desktop-amd64.iso.torrent')
-PIECES_HAVE = '0'*len(TORR_DATA.total_pieces)
-print(f"PIECES_HAVE:::::::::::::::::::::::::::::::::::::::{PIECES_HAVE}")
 
 
 def main():
     t = Tracker()
     t.connect()
-    torr_info = TorrInfo()
-    torr_info.get_torr_info('xubuntu-20.04-desktop-amd64.iso.torrent')
 
     peer_list = t.peer_list
     for x in range(0, len(peer_list), 1):
-        P = Peer_Messaging(peer_list[x][0], peer_list[x][1], torr_info)
+        P = Peer_Messaging(peer_list[x][0], peer_list[x][1], TORR_DATA)
         P.allowhandshake()
 
 
