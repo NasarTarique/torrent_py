@@ -17,6 +17,8 @@ from torrinfo import TorrInfo
 TORRENT_PATH = 'xubuntu-20.04.1-desktop-amd64.iso.torrent'
 TORR_DATA = TorrInfo(TORRENT_PATH)
 PIECES_HAVE = '0'*len(TORR_DATA.piece_hashes)
+MAX_PEERS = 50
+CONNECTED_PEERS = 0
 BlocksPerPiece = ceil(TORR_DATA.piece_size/16384)
 
 
@@ -25,7 +27,6 @@ BlocksPerPiece = ceil(TORR_DATA.piece_size/16384)
 class Tracker:
 
     def __init__(self):
-        self.loop = asyncio.get_event_loop()
         self.uploaded: int = 0
         self.downloaded: int = 0
         self.url = self.get_url()
@@ -51,9 +52,6 @@ class Tracker:
     def get_url(self):
         url = TORR_DATA.tracker_url + '?'+urllib.parse.urlencode(self.get_params())
         return url
-
-    def connect(self):
-        self.loop.run_until_complete(self.get_peers())
 
     async def decode_tracker_response(self):
         chunks = list(self.tracker_response['peers'])
@@ -106,9 +104,6 @@ class Peer_Messaging:
         writer.write(handshake_msg)
         return await reader.read(1000)
 
-    def allowhandshake(self):
-        self.loop.run_until_complete(self.ConnectPeer())
-
     async def ConnectPeer(self):
         try:
             reader, writer = await asyncio.open_connection(self.host, self.peer_port)
@@ -155,14 +150,13 @@ class Peer_Messaging:
                     self.BlockLength = 0
                     self.RequestBlockIndex += 16384
 
-
         except Exception as e:
-            print(e)
+            print(f"Exception Consumed {e}")
 
     async def MessageHandler(self, reader, writer, msg):
         if len(msg) == 4:
-            length = struct.unpack(">i", msg) if length == 0:
-                pass
+            length = struct.unpack(">i", msg)
+            if length == 0: pass
             else:
                 await self.CloseConnection(writer)
         else:
@@ -274,24 +268,21 @@ class Peer_Messaging:
         print("initial Block data")
 
 
-'''class  ManagePeers:
-
-    def __init__(self,TorrInfo, Tracker):
-        self.torr_info = TorrInfo
-        self.pieces_have = [0]*len(TorrInfo.piece_hashes)
-        self.Tracker = Tracker
-'''
-
-
-def main():
-    t = Tracker()
-    t.connect()
-
-    peer_list = t.peer_list
+def get_peer_objects(peer_list):
+    PeerMsgObjects = []
     for x in range(0, len(peer_list), 1):
         P = Peer_Messaging(peer_list[x][0], peer_list[x][1], TORR_DATA)
-        P.allowhandshake()
+        PeerMsgObjects.append(P.ConnectPeer())
 
+    return PeerMsgObjects
+         
+async def main():
+    t = Tracker()
+    await t.get_peers()
+    PeerMsgObjects = get_peer_objects(t.peer_list) 
+    await asyncio.gather(*PeerMsgObjects)
 
 if __name__ == '__main__':
-    main()
+    # loop = asyncio.get_event_loop()
+    # loop.run_until_complete(main())
+    asyncio.run(main())
