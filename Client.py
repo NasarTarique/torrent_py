@@ -1,45 +1,22 @@
-import  sys
+import peertest
+import settings
 import asyncio
-import aiohttp
-import socket
-from peer import  Tracker,Peer
 
-sock  = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+maxpeers = settings.MAX_PEERS
+         
+async def download(queue):
+    while True:
+        peer_addr = await queue.get()
+        PeerObj = peertest.Peer_Messaging(peer_addr[0],peer_addr[1], settings.TORR_DATA)
+        await PeerObj.ConnectPeer()
 
-
-class Client:
-
-    def __init__(self,tracker_obj,Peer_obj):
-        self.tracker = tracker_obj
-        self.Peer = Peer_obj
-        self.ClientSession =  aiohttp.ClientSession()
-        self.queue = asyncio.Queue()
-    
-
-    def Handshake(self):
+async def main():
+    queue = asyncio.Queue()
+    t = peertest.Tracker()
+    tracker_task = asyncio.create_task(t.get_peers(queue))
+    Downloader = [asyncio.create_task(download(queue)) for x in range(0, maxpeers, 1)] 
+    await asyncio.gather(tracker_task)
 
 
-
-# async def download(torrent_file):
-#     # read and parse torrent file
-#     torrent = read_torrent(torrent_file) 
-# 
-#     # get the peers from tracker
-#     peer_addresses = await getr_peers(torrent)
-# 
-#     
-#     file_pieces_queue = asyncio.Queue()
-# 
-#     file_saver = FileSaver(file_pieces_queue)
-# 
-#     peers = [Peer(addr,file_pieces_queue) for addr in peer_addresses]
-# 
-# 
-#     await asyncio.gather(
-#         *([peer.download() for peer in peers] +
-#          [file_saver.start()])
-#     )
-
-
-
-
+if __name__ == '__main__':
+    asyncio.run(main())

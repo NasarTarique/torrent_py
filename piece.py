@@ -1,3 +1,5 @@
+from settings import PIECES_HAVE, TORR_DATA
+
 class Piece:
 
     def __init__(self):
@@ -8,8 +10,8 @@ class Piece:
         self.blocklist = []
         self.BlockLength = 0
 
-    def GetPieceIndex(self):
-        for x in range(0, len(self.torr_info.piece_hashes)):
-            if self.peer_pieces == '1' and PIECES_HAVE == '0':
+    def GetPieceIndex(self, peer_pieces):
+        for x in range(0, len(TORR_DATA.piece_hashes)):
+            if peer_pieces == '1' and PIECES_HAVE[x] == '0':
                 self.RequestPieceIndex = x
                 break
