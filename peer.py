@@ -242,6 +242,8 @@ class Peer_Messaging:
                 self.Block += blockparts 
                 print("Blocklength <")
                 # print(blockparts)
+                if hashlib.sha1(self.Block).hexdigest() == settings.TORR_DATA.piece_hashes[self.RequestPieceIndex]:
+                    break
             elif self.BlockLength == 16384:
                 print("BlockLength =")
                 self.Block += blockparts
