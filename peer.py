@@ -48,19 +48,18 @@ class Tracker:
     async def get_peers(self, queue):
         connection_trials = 0
         while True:
-            try:
                 async with aiohttp.ClientSession() as Session:
-                    response = await self.fetch(Session)
-                    self.tracker_response = bencode.decode(response)
-                    await self.decode_tracker_response(queue)
-                    await asyncio.sleep(30)
-                    if "0" not in settings.PIECES_HAVE and "2" not in settings.PIECES_HAVE:
-                        break
-                    connection_trials = 0
-            except KeyError:
-                connection_trials += 1
-            
-
+                    try:
+                        response = await self.fetch(Session)
+                        self.tracker_response = bencode.decode(response)
+                        await self.decode_tracker_response(queue)
+                        await asyncio.sleep(30)
+                        if "0" not in settings.PIECES_HAVE and "2" not in settings.PIECES_HAVE:
+                            break
+                        connection_trials = 0
+                    except Exception:
+                        connection_trials+=1
+                        print("Tracker Exception")
 
     async def fetch(self,session):
         async with session.get(self.url) as response:

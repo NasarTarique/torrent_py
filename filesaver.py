@@ -1,17 +1,27 @@
+import hashlib
+import settings
+
 
 class FileSaver:
 
     def __init__(self):
+        self.filepath = settings.FILE_PATH + settings.FILE_NAME
 
+    def checkfile(self):
+        with open(self.filepath,"rb") as tfile:
+            for x in range(0, len(settings.PIECES_HAVE)):
+                tfile.seek(x*settings.TORR_DATA.piece_size)
+                piece = tfile.read(settings.TORR_DATA.piece_size)
+                piecehash = hashlib.sha1(piece).hexdigest()
+                if(piecehash == settings.TORR_DATA.piece_hashes[x]):
+                   settings.PIECES_HAVE[x] = '1'
 
     def write_piece(self,piece,pieceindex):
         try:
-            with open((FILE_PATH+FILE_NAME),"r+b") as f:
+            with open(self.filepath,"r+b") as f:
                 f.seek(pieceindex*settings.TORR_DATA.piece_size)
                 f.write(piece)
-        except IOException:
-            with open((FILE_PATH+FILE_NAME), "w+b") as f:
+        except IOError:
+            with open(self.filepath, "w+b") as f:
                 f.seek(pieceindex*settings.TORR_DATA.piece_size)
                 f.write(piece)
-
-        
