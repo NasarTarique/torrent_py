@@ -25,7 +25,6 @@ class Tracker:
             'compact': 0,
             'left': settings.TORR_DATA.torrent_size - self.downloaded,
             'event': 'started',
-
         }
 
         return params
@@ -59,7 +58,6 @@ class Tracker:
                         connection_trials = 0
                     except Exception:
                         connection_trials+=1
-                        print("Tracker Exception")
 
     async def fetch(self,session):
         async with session.get(self.url) as response:
@@ -100,8 +98,6 @@ class Peer_Messaging:
             secondmsg = await reader.read(1000)
             info_hash, peer_id = await self.DecodeHandshakeMsg(peer_handshake)
             if secondmsg:
-                print("this is the second msg")
-                print("secondmsg")
                 length, id, payload = await self.decodeMsg(secondmsg)
                 if id==5:
                     self.DecodeBitfieldMsg(payload)
@@ -115,20 +111,16 @@ class Peer_Messaging:
                 check = await reader.read(10000)
                 self.GetPieceIndex()
                 for x in range(0, settings.BlocksPerPiece, 1):
-                    print(f"{x}")
                     await self.Request(reader, writer)
                     request_reply = await reader.read(65536) 
-                    # print("request_reply")
                     await self.MessageHandler(reader, writer, request_reply)
-                    print(f"Blocklength =============={self.BlockLength}")
                     self.downloaded_piece += self.Block
-                    print(f"piece length {len(self.downloaded_piece)}")
-                    print(settings.TORR_DATA.piece_size)
                     if len(self.downloaded_piece) == settings.TORR_DATA.piece_size:
-                        downloaded_piece_hashe = hashlib.sha1(self.downloaded_piece).hexdigest()
-                        if downloaded_piece_hashe == settings.TORR_DATA.piece_hashes[self.RequestPieceIndex]:
-                            print("matched")
+                        downloaded_piece_hash = hashlib.sha1(self.downloaded_piece).hexdigest()
+                        if downloaded_piece_hash == settings.TORR_DATA.piece_hashes[self.RequestPieceIndex]:
                             settings.PIECES_HAVE[self.RequestPieceIndex] = '1'
+                            settings.PIECES_DOWNLOADED +=1
+                            settings.BAR.next()
                             self.write_piece(self.downloaded_piece)
                             break
                         else:
@@ -140,7 +132,6 @@ class Peer_Messaging:
 
         except Exception as e:
             settings.PIECES_HAVE[self.RequestPieceIndex] = '0'
-            print(f"Exception Consumed {e}")
 
     async def MessageHandler(self, reader, writer, msg):
         if len(msg) == 4:
@@ -221,13 +212,11 @@ class Peer_Messaging:
             with open((settings.FILE_PATH+settings.FILE_NAME),"r+b") as f:
                 f.seek(self.RequestPieceIndex*settings.TORR_DATA.piece_size)
                 byteoffset = self.RequestPieceIndex*settings.TORR_DATA.piece_size
-                print(f"byteoffset = {byteoffset}")
                 f.write(piece)
         except IOError:
             with open((settings.FILE_PATH+settings.FILE_NAME), "w+b") as f:
                 f.seek(self.RequestPieceIndex*settings.TORR_DATA.piece_size)
                 byteoffset = self.RequestPieceIndex*settings.TORR_DATA.piece_size
-                print(f"byteoffset = {byteoffset}")
                 f.write(piece)
 
     async def BlockMsg(self, reader, writer, msg):
@@ -240,21 +229,16 @@ class Peer_Messaging:
                 break
             if self.BlockLength < 16384:
                 self.Block += blockparts 
-                print("Blocklength <")
-                # print(blockparts)
                 if hashlib.sha1(self.Block).hexdigest() == settings.TORR_DATA.piece_hashes[self.RequestPieceIndex]:
                     break
             elif self.BlockLength == 16384:
-                print("BlockLength =")
                 self.Block += blockparts
-                # print(blockparts)
                 break
             else:
                 break
         
     async def decodeMsg(self, msg):
         load_length, id = struct.unpack(">iB", msg[0:5])
-        print(load_length)
         if len(msg) >= 6:
             load = struct.unpack(f">{len(msg)-5}s", msg[5:len(msg)])
             return load_length, id, load
@@ -263,14 +247,11 @@ class Peer_Messaging:
     
     def DecodeBitfieldMsg(self, payload):
         self.peer_pieces = ''.join([bin(byte)[2:] for byte in payload[0]])
-        print(self.peer_pieces[0])
     
     def DecodePieceMsg(self, payload):
         index, block = struct.unpack(">ii", payload[0:8])
-        print(f"BLock offset =  {block} index = {index}")
         block_data = payload[8:len(payload)]
         self.BlockLength += len(block_data)
         self.Block += block_data
-        print("initial Block data")
 
 
