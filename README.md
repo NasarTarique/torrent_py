@@ -20,5 +20,5 @@ python3 Client.py
 
 ### Screenshot
 
-![Screenshot.png](screenshot/screenshot.png)
+![](https://raw.githubusercontent.com/NasarTarique/torrent_py/master/screenshot/Screenshot.png)
 
